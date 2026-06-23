@@ -15,7 +15,8 @@ export default function UsePage() {
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
-  const inputRef = useRef(null)
+  const [mapsReady, setMapsReady] = useState(false)
+  const containerRef = useRef(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -31,29 +32,38 @@ export default function UsePage() {
       setMyStock((inv.data || []).filter(i => i.technician === u.name && i.onHand > 0))
     })
 
-    const initMaps = () => {
-      if (!inputRef.current) return
-      const autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
-        componentRestrictions: { country: 'us' },
-        fields: ['formatted_address'],
-        types: ['address']
-      })
-      autocomplete.addListener('place_changed', () => {
-        const place = autocomplete.getPlace()
-        if (place.formatted_address) setJobAddress(place.formatted_address)
-      })
-    }
+    // Use the new Maps JS API loader
+    window.__googleMapsCallback = () => setMapsReady(true)
+    const script = document.createElement('script')
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places&v=weekly&callback=__googleMapsCallback`
+    script.async = true
+    script.defer = true
+    document.head.appendChild(script)
 
-    if (window.google?.maps?.places) {
-      initMaps()
-    } else {
-      const script = document.createElement('script')
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places&loading=async`
-      script.async = true
-      script.onload = initMaps
-      document.head.appendChild(script)
-    }
+    return () => { window.__googleMapsCallback = null }
   }, [])
+
+  useEffect(() => {
+    if (!mapsReady || !containerRef.current) return
+    try {
+      // Use new PlaceAutocompleteElement
+      const el = new window.google.maps.places.PlaceAutocompleteElement({
+        componentRestrictions: { country: 'us' },
+        types: ['address'],
+      })
+      el.style.cssText = 'width:100%; font-size:15px; --gmp-filled-input-border-radius:8px;'
+      containerRef.current.innerHTML = ''
+      containerRef.current.appendChild(el)
+
+      el.addEventListener('gmp-placeselect', async ({ placePrediction }) => {
+        const place = placePrediction.toPlace()
+        await place.fetchFields({ fields: ['formattedAddress'] })
+        setJobAddress(place.formattedAddress)
+      })
+    } catch (e) {
+      console.error('PlaceAutocomplete error:', e)
+    }
+  }, [mapsReady])
 
   const addItem = () => setItems([...items, { partName: '', quantity: '' }])
   const removeItem = (i) => setItems(items.filter((_, idx) => idx !== i))
@@ -140,14 +150,18 @@ export default function UsePage() {
 
       <div style={{ padding: '20px 20px 0' }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Job address *</p>
-        <input
-          ref={inputRef}
-          type="text"
-          placeholder="Start typing address…"
-          value={jobAddress}
-          onChange={e => setJobAddress(e.target.value)}
-          style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1.5px solid #E2E1DD', background: '#fff', fontSize: 15 }}
-        />
+        <div ref={containerRef} style={{ width: '100%', minHeight: 46 }}>
+          {!mapsReady && (
+            <input type="text" placeholder="Loading address search…" disabled
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1.5px solid #E2E1DD', background: '#F9F9F8', fontSize: 15, color: '#A8A69F' }} />
+          )}
+        </div>
+        {/* Show selected address */}
+        {jobAddress && (
+          <p style={{ fontSize: 13, color: '#2D7D46', marginTop: 8, padding: '8px 12px', background: '#EBF5EF', borderRadius: 6 }}>
+            ✓ {jobAddress}
+          </p>
+        )}
       </div>
 
       <div style={{ padding: '20px 20px 0' }}>
