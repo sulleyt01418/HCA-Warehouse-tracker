@@ -4,12 +4,10 @@ import { useRouter } from 'next/navigation'
 import BarcodeScanner from '../components/BarcodeScanner'
 
 const API = process.env.NEXT_PUBLIC_API_URL
-const TECHNICIANS = ['Javier', 'Eduardo', 'Sergio', 'Alan', 'Ocean', 'Miguel', 'Maddiel']
 
-export default function CheckoutPage() {
+export default function ReceivePage() {
   const [user, setUser] = useState(null)
   const [parts, setParts] = useState([])
-  const [technician, setTechnician] = useState('')
   const [items, setItems] = useState([{ partName: '', barcode: '', quantity: '' }])
   const [notes, setNotes] = useState('')
   const [scanning, setScanning] = useState(false)
@@ -36,6 +34,7 @@ export default function CheckoutPage() {
 
   const handleBarcode = async (barcode) => {
     setScanning(false)
+    // Look up part by barcode
     const res = await fetch(`${API}?action=getPartByBarcode&barcode=${encodeURIComponent(barcode)}`)
     const data = await res.json()
     if (data.found) {
@@ -43,10 +42,11 @@ export default function CheckoutPage() {
       updated[scanTarget] = { partName: data.data.name, barcode, quantity: updated[scanTarget].quantity }
       setItems(updated)
     } else {
+      // barcode not found, just store the barcode and let user pick part manually
       const updated = [...items]
       updated[scanTarget] = { ...updated[scanTarget], barcode, partName: '' }
       setItems(updated)
-      setError(`Barcode ${barcode} not found. Please select part manually.`)
+      setError(`Barcode ${barcode} not found in parts list. Please select part manually or add barcode to Parts sheet.`)
     }
     setScanTarget(null)
   }
@@ -54,13 +54,12 @@ export default function CheckoutPage() {
   const validItems = items.filter(it => it.partName && it.quantity > 0)
 
   const handleSubmit = async () => {
-    if (!technician) { setError('Please select a technician.'); return }
-    if (validItems.length === 0) { setError('Please add at least one part.'); return }
+    if (validItems.length === 0) { setError('Please add at least one part with quantity.'); return }
     setSubmitting(true); setError('')
     try {
       const res = await fetch(API, {
         method: 'POST',
-        body: JSON.stringify({ action: 'addCheckout', technician, jobAddress: 'Truck Restock', notes, items: validItems })
+        body: JSON.stringify({ action: 'addReceive', notes, items: validItems })
       })
       const data = await res.json()
       if (data.success) setSubmitted(true)
@@ -74,8 +73,8 @@ export default function CheckoutPage() {
   if (submitted) return (
     <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: 40 }}>
       <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#EBF5EF', color: '#2D7D46', fontSize: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✓</div>
-      <h2 style={{ fontSize: 22, fontWeight: 700 }}>Checkout recorded!</h2>
-      <p style={{ color: '#6B6963' }}>{validItems.length} item{validItems.length > 1 ? 's' : ''} given to {technician}</p>
+      <h2 style={{ fontSize: 22, fontWeight: 700 }}>Stock received!</h2>
+      <p style={{ color: '#6B6963' }}>{validItems.length} item{validItems.length > 1 ? 's' : ''} added to warehouse</p>
       <button onClick={() => router.push('/admin')} style={{ marginTop: 8, padding: '14px 32px', borderRadius: 10, border: 'none', background: '#E8611A', color: '#fff', fontSize: 16, fontWeight: 600 }}>Done</button>
     </div>
   )
@@ -86,28 +85,11 @@ export default function CheckoutPage() {
 
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px', background: '#fff', borderBottom: '1px solid #E2E1DD', position: 'sticky', top: 0, zIndex: 10 }}>
         <button onClick={() => router.push('/admin')} style={{ border: 'none', background: 'none', color: '#E8611A', fontSize: 14, fontWeight: 600, padding: 0 }}>← Back</button>
-        <h1 style={{ fontSize: 18, fontWeight: 600 }}>Checkout Parts</h1>
+        <h1 style={{ fontSize: 18, fontWeight: 600 }}>Receive Stock</h1>
       </header>
 
-      {/* Technician select */}
       <div style={{ padding: '20px 20px 0' }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Technician *</p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-          {TECHNICIANS.map(t => (
-            <button key={t} onClick={() => setTechnician(t)} style={{
-              padding: '12px 8px', borderRadius: 8,
-              border: `1.5px solid ${technician === t ? '#E8611A' : '#E2E1DD'}`,
-              background: technician === t ? '#FDF0E8' : '#fff',
-              color: technician === t ? '#B84D12' : '#1A1917',
-              fontSize: 14, fontWeight: 500
-            }}>{t}</button>
-          ))}
-        </div>
-      </div>
-
-      {/* Parts */}
-      <div style={{ padding: '20px 20px 0' }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>Parts *</p>
+        <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>Parts received *</p>
 
         {items.map((item, i) => (
           <div key={i} style={{ background: '#fff', borderRadius: 10, border: '1.5px solid #E2E1DD', padding: '14px', marginBottom: 12 }}>
@@ -128,7 +110,7 @@ export default function CheckoutPage() {
               <option value="">Select part…</option>
               {parts.map(p => <option key={p.name} value={p.name}>{p.name}{p.notes ? ` — ${p.notes}` : ''}</option>)}
             </select>
-            <input type="number" min="1" placeholder="Qty" value={item.quantity} onChange={e => updateItem(i, 'quantity', e.target.value)}
+            <input type="number" min="1" placeholder="Quantity received" value={item.quantity} onChange={e => updateItem(i, 'quantity', e.target.value)}
               style={{ width: '100%', padding: '11px 12px', borderRadius: 8, border: '1.5px solid #E2E1DD', background: '#fff', fontSize: 15, fontWeight: 600 }} />
           </div>
         ))}
@@ -138,7 +120,7 @@ export default function CheckoutPage() {
 
       <div style={{ padding: '20px 20px 0' }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Notes <span style={{ color: '#A8A69F', fontWeight: 400, textTransform: 'none' }}>(optional)</span></p>
-        <textarea rows={2} placeholder="Any additional info…" value={notes} onChange={e => setNotes(e.target.value)}
+        <textarea rows={2} placeholder="e.g. Invoice #1234, vendor name…" value={notes} onChange={e => setNotes(e.target.value)}
           style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1.5px solid #E2E1DD', background: '#fff', fontSize: 15, resize: 'none' }} />
       </div>
 
@@ -147,7 +129,7 @@ export default function CheckoutPage() {
       <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '16px 20px', background: '#fff', borderTop: '1px solid #E2E1DD', maxWidth: 480, margin: '0 auto' }}>
         <button onClick={handleSubmit} disabled={submitting}
           style={{ width: '100%', padding: 15, borderRadius: 10, border: 'none', background: submitting ? '#E2E1DD' : '#E8611A', color: submitting ? '#A8A69F' : '#fff', fontSize: 16, fontWeight: 600 }}>
-          {submitting ? 'Submitting…' : 'Submit checkout'}
+          {submitting ? 'Saving…' : 'Confirm receipt'}
         </button>
       </div>
     </div>
