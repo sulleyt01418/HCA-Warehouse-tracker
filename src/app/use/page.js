@@ -3,7 +3,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 const API = process.env.NEXT_PUBLIC_API_URL
-const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY
 
 export default function UsePage() {
   const [user, setUser] = useState(null)
@@ -11,13 +10,13 @@ export default function UsePage() {
   const [myStock, setMyStock] = useState([])
   const [items, setItems] = useState([{ partName: '', quantity: '' }])
   const [jobAddress, setJobAddress] = useState('')
+  const [suggestions, setSuggestions] = useState([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
-  const [mapsLoaded, setMapsLoaded] = useState(false)
-  const inputRef = useRef(null)
-  const autocompleteRef = useRef(null)
+  const debounceRef = useRef(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -32,31 +31,30 @@ export default function UsePage() {
       setParts(p.data || [])
       setMyStock((inv.data || []).filter(i => i.technician === u.name && i.onHand > 0))
     })
-
-    // Load Google Maps
-    if (window.google) { setMapsLoaded(true); return }
-    const script = document.createElement('script')
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places`
-    script.async = true
-    script.onload = () => setMapsLoaded(true)
-    document.head.appendChild(script)
   }, [])
 
-  useEffect(() => {
-    if (!mapsLoaded || !inputRef.current) return
-    const autocomplete = new window.google.maps.places.Autocomplete(inputRef.current, {
-      componentRestrictions: { country: 'us' },
-      fields: ['formatted_address'],
-      types: ['address']
-    })
-    autocompleteRef.current = autocomplete
-    autocomplete.addListener('place_changed', () => {
-      const place = autocomplete.getPlace()
-      if (place.formatted_address) {
-        setJobAddress(place.formatted_address)
-      }
-    })
-  }, [mapsLoaded])
+  const handleAddressInput = (val) => {
+    setJobAddress(val)
+    setShowSuggestions(true)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (val.length < 3) { setSuggestions([]); return }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val)}&countrycodes=us&limit=5&addressdetails=1`,
+          { headers: { 'Accept-Language': 'en' } }
+        )
+        const data = await res.json()
+        setSuggestions(data.map(d => d.display_name))
+      } catch { setSuggestions([]) }
+    }, 400)
+  }
+
+  const selectAddress = (addr) => {
+    setJobAddress(addr)
+    setSuggestions([])
+    setShowSuggestions(false)
+  }
 
   const addItem = () => setItems([...items, { partName: '', quantity: '' }])
   const removeItem = (i) => setItems(items.filter((_, idx) => idx !== i))
@@ -69,16 +67,13 @@ export default function UsePage() {
   const handleSubmit = async () => {
     if (validItems.length === 0) { setError('Please select at least one part.'); return }
     if (!jobAddress.trim()) { setError('Please enter the job address.'); return }
-
     for (const item of validItems) {
       const stock = myStock.find(s => s.partName === item.partName)
       const onHand = stock ? stock.onHand : 0
       if (Number(item.quantity) > onHand) {
-        setError(`Not enough ${item.partName} on hand (you have ${onHand})`)
-        return
+        setError(`Not enough ${item.partName} on hand (you have ${onHand})`); return
       }
     }
-
     setSubmitting(true); setError('')
     try {
       const res = await fetch(API, {
@@ -98,7 +93,8 @@ export default function UsePage() {
     <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, textAlign: 'center', padding: 40 }}>
       <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#EBF5EF', color: '#2D7D46', fontSize: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✓</div>
       <h2 style={{ fontSize: 22, fontWeight: 700 }}>Usage logged!</h2>
-      <p style={{ color: '#6B6963' }}>{validItems.length} item{validItems.length > 1 ? 's' : ''} recorded for {jobAddress}</p>
+      <p style={{ color: '#6B6963' }}>{validItems.length} item{validItems.length > 1 ? 's' : ''} recorded</p>
+      <p style={{ color: '#A8A69F', fontSize: 13 }}>{jobAddress}</p>
       <button onClick={() => router.push('/dashboard')} style={{ marginTop: 8, padding: '14px 32px', borderRadius: 10, border: 'none', background: '#E8611A', color: '#fff', fontSize: 16, fontWeight: 600 }}>Done</button>
     </div>
   )
@@ -110,7 +106,6 @@ export default function UsePage() {
         <h1 style={{ fontSize: 18, fontWeight: 600 }}>Log Usage</h1>
       </header>
 
-      {/* My stock */}
       {myStock.length > 0 && (
         <div style={{ padding: '14px 20px', background: '#EBF2FB', borderBottom: '1px solid #C5D9F0' }}>
           <p style={{ fontSize: 12, fontWeight: 600, color: '#1A5EA8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Your current stock</p>
@@ -124,7 +119,6 @@ export default function UsePage() {
         </div>
       )}
 
-      {/* Parts */}
       <div style={{ padding: '20px 20px 0' }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Parts used *</p>
         {items.map((item, i) => (
@@ -145,21 +139,29 @@ export default function UsePage() {
         <button onClick={addItem} style={{ border: 'none', background: 'none', color: '#E8611A', fontSize: 14, fontWeight: 600, padding: '8px 0' }}>+ Add another part</button>
       </div>
 
-      {/* Job address with Places Autocomplete */}
-      <div style={{ padding: '20px 20px 0' }}>
+      <div style={{ padding: '20px 20px 0', position: 'relative', zIndex: 20 }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Job address *</p>
         <input
-          ref={inputRef}
           type="text"
           placeholder="Start typing address…"
           value={jobAddress}
-          onChange={e => setJobAddress(e.target.value)}
+          onChange={e => handleAddressInput(e.target.value)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
           style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '1.5px solid #E2E1DD', background: '#fff', fontSize: 15 }}
         />
-        {!mapsLoaded && <p style={{ fontSize: 12, color: '#A8A69F', marginTop: 6 }}>Loading address search…</p>}
+        {showSuggestions && suggestions.length > 0 && (
+          <div style={{ position: 'absolute', left: 20, right: 20, background: '#fff', border: '1.5px solid #E2E1DD', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.1)', overflow: 'hidden', zIndex: 50 }}>
+            {suggestions.map((s, i) => (
+              <button key={i} onMouseDown={() => selectAddress(s)}
+                style={{ display: 'block', width: '100%', padding: '12px 14px', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid #F0EFED' : 'none', background: '#fff', textAlign: 'left', fontSize: 13, color: '#1A1917', cursor: 'pointer', lineHeight: 1.4 }}>
+                📍 {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Notes */}
       <div style={{ padding: '20px 20px 0' }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: '#6B6963', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Notes <span style={{ color: '#A8A69F', fontWeight: 400, textTransform: 'none' }}>(optional)</span></p>
         <textarea rows={2} placeholder="Any additional info…" value={notes} onChange={e => setNotes(e.target.value)}
